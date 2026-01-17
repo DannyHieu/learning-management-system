@@ -1,42 +1,228 @@
-#root {
-  max-width: 1280px;
+:root {
+  --w3-green: #04AA6D;
+  --w3-green-hover: #059862;
+  --w3-light-grey: #E7E9EB;
+  --w3-dark-grey: #282A35;
+  --w3-border-color: #d3d3d3;
+}
+
+body {
+  font-family: "Segoe UI", Arial, sans-serif;
+  color: #000;
+  padding: 0;
+  margin: 0;
+  background-color: #E7E9EB;
+  /* Light grey background like W3Schools TryIt */
+}
+
+.sql-container {
+  width: 100%;
+  padding: 0 20px;
+  max-width: 1600px;
+  /* Limit width slightly to avoid too much sparsity */
   margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
+.header-section {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
 }
 
-@keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
+.header-section h1 {
+  font-size: 24px;
+  font-weight: 400;
+  margin: 10px 0;
+  color: #000;
+}
+
+.tab-navigator {
+  margin-bottom: 0;
+  /* border-bottom: 1px solid var(--w3-border-color); */
+}
+
+.tab-btn {
+  background-color: #f1f1f1;
+  border: 1px solid #d3d3d3;
+  border-bottom: none;
+  padding: 10px 20px;
+  cursor: pointer;
+  float: left;
+  outline: none;
+  transition: 0.3s;
+  font-size: 16px;
+  margin-right: 5px;
+  border-radius: 5px 5px 0 0;
+  color: black;
+  /* Explicitly set tab title color to black */
+}
+
+.tab-btn:hover {
+  background-color: #ddd;
+}
+
+.tab-btn.active {
+  background-color: #fff;
+  border-bottom: 1px solid #fff;
+  /* Blend with container */
+  position: relative;
+  top: 1px;
+  /* Cover the container border */
+  font-weight: bold;
+}
+
+/* Clearfix for tabs */
+.tab-navigator::after {
+  content: "";
+  clear: both;
+  display: table;
+}
+
+.editor-container {
+  background-color: #fff;
+  padding: 15px;
+  border: 1px solid var(--w3-border-color);
+  box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.1);
+  /* Subtle shadow */
+  margin-bottom: 25px;
+  border-radius: 0 5px 5px 5px;
+  /* Rounded bottom and top-right */
+}
+
+.sql-editor {
+  width: 100%;
+  height: 300px;
+  padding: 15px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 16px;
+  border: 1px solid #d3d3d3;
+  box-sizing: border-box;
+  resize: vertical;
+  color: #FFFFFF;
+  /* Reverted to white as requested */
+  outline: none;
+}
+
+.sql-editor:focus {
+  border: 1px solid var(--w3-green);
+}
+
+.instruction-text {
+  margin: 20px 0 10px 0;
+  font-size: 16px;
+  color: #000;
+}
+
+.run-btn {
+  background-color: var(--w3-green);
+  color: white;
+  border: none;
+  padding: 12px 30px;
+  font-size: 18px;
+  cursor: pointer;
+  border-radius: 25px;
+  /* Rounded pill shape */
+  margin-bottom: 25px;
+  transition: background-color 0.3s;
+  font-weight: 400;
+}
+
+.run-btn:hover {
+  background-color: var(--w3-green-hover);
+}
+
+.run-btn:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+
+.result-section {
+  background-color: #fff;
+  border: 1px solid var(--w3-border-color);
+  padding: 20px;
+  box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.1);
+}
+
+.record-count {
+  margin-bottom: 15px;
+  font-size: 16px;
+}
+
+.table-responsive {
+  overflow-x: auto;
+}
+
+.w3-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 16px;
+}
+
+.w3-table th,
+.w3-table td {
+  padding: 12px 15px;
+  text-align: left;
+  border: 1px solid #ddd;
+}
+
+.w3-table th {
+  background-color: #fff;
+  font-weight: bold;
+}
+
+.w3-table tr:nth-child(even) {
+  background-color: #f2f2f2;
+}
+
+.w3-table tr:hover {
+  background-color: #ddd;
+}
+
+h2 {
+  font-size: 26px;
+  font-weight: 400;
+  margin: 10px 0;
+}
+
+.error-message {
+  color: red;
+  padding: 10px;
+  background-color: #ffeeee;
+  border: 1px solid red;
+  border-radius: 4px;
+}
+
+@media screen and (max-width: 600px) {
+  .sql-container {
+    padding: 0 10px;
   }
-  to {
-    transform: rotate(360deg);
+
+  .header-section {
+    flex-direction: column;
+    align-items: flex-start;
   }
-}
 
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
+  .tab-btn {
+    width: 100%;
+    /* Stack tabs on mobile */
+    margin-bottom: 2px;
+    border-radius: 5px;
+    border-bottom: 1px solid #d3d3d3;
   }
-}
 
-.card {
-  padding: 2em;
-}
+  .tab-btn.active {
+    top: 0;
+    border-bottom: 2px solid var(--w3-green);
+  }
 
-.read-the-docs {
-  color: #888;
+  .sql-editor {
+    height: 200px;
+    /* Smaller editor on mobile */
+  }
+
+  .run-btn {
+    width: 100%;
+    margin-bottom: 15px;
+  }
 }

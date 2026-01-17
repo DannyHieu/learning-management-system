@@ -1,73 +1,64 @@
-# React + TypeScript + Vite
+# Learning Management System - Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This is the frontend application for the Learning Management System, built with **React**, **TypeScript**, and **Vite**. It connects to a Spring Boot backend and executes SQL queries against a local SQL Server database.
 
-Currently, two official plugins are available:
+## Prerequisites
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+Before running this project, ensure you have the following installed:
 
-## React Compiler
+*   **Node.js**: v18 or higher (using `npm` or `yarn`).
+*   **Java JDK**: v17 or higher (for the backend).
+*   **SQL Server**: Local instance running on port 1433.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Project Structure
 
-## Expanding the ESLint configuration
+*   `front-end/`: React application (Vite).
+*   `back-end/`: Spring Boot application.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Setup & Running
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+To fully run the application, you need to start both the **Backend** (API) and the **Frontend** (UI).
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+### 1. Start the Backend
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+The frontend relies on the backend API to fetch data.
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+1.  Navigate to the `back-end` directory:
+    ```bash
+    cd ../back-end
+    ```
+2.  Configure Database Credentials:
+    *   Open `src/main/resources/application.properties`.
+    *   Update `spring.datasource.username` and `spring.datasource.password` with your local SQL Server credentials.
+3.  Run the Spring Boot application:
+    ```bash
+    ./mvnw spring-boot:run
+    ```
+    *   The backend will start on `http://localhost:8080`.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+### 2. Start the Frontend
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+1.  Navigate to the `front-end` directory:
+    ```bash
+    cd ../front-end
+    ```
+2.  Install dependencies (first time only):
+    ```bash
+    npm install
+    ```
+3.  Run the development server:
+    ```bash
+    npm run dev
+    ```
+4.  Open your browser to the URL shown (usually `http://localhost:5173`).
+
+## Features
+
+*   **SQL Playground**: Interface to run SQL queries directly against the database.
+*   **Dynamic Data Loading**: Automatically fetches and displays data from the `GIAOVIEN` table on startup.
+*   **Responsive Design**: distinct layouts for desktop and mobile.
+
+## Troubleshooting
+
+*   **"Failed to fetch" error**: Ensure the backend is running on port 8080.
+*   **Database connection error**: Check the credentials in `application.properties` and ensure SQL Server is running and "TCP/IP" is enabled in SQL Server Configuration Manager.
