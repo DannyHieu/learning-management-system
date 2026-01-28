@@ -24,8 +24,33 @@ public class SqlController {
     }
 
     @PostMapping("/execute")
-    public List<Map<String, Object>> executeSql(@RequestBody String sql) {
-        return jdbcTemplate.queryForList(sql);
+    public ResponseEntity<?> executeSql(@RequestBody String sql) {
+        String trimmed = sql == null ? "" : sql.trim();
+        if (trimmed.isEmpty()) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", "SQL is empty.");
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+        }
+
+        // Đơn giản: nếu bắt đầu bằng SELECT (hoặc WITH) thì coi là query trả result set
+        String lower = trimmed.toLowerCase();
+        try {
+            if (lower.startsWith("select") || lower.startsWith("with")) {
+                List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql);
+                return ResponseEntity.ok(rows);
+            } else {
+                // DDL / DML / EXEC: không kỳ vọng result set
+                jdbcTemplate.execute(sql);
+                Map<String, Object> res = new HashMap<>();
+                res.put("success", true);
+                res.put("message", "SQL executed successfully (no result set).");
+                return ResponseEntity.ok(res);
+            }
+        } catch (Exception e) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", "SQL Error: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+        }
     }
 
     @PostMapping("/import")
