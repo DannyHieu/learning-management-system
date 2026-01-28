@@ -24,73 +24,205 @@ interface TabConfig {
 }
 
 // SQL definitions from the SQL file
+// SQL definitions for MSSQL (LMS_DB)
 const storedProcedures: SqlOption[] = [
   {
     id: "sp1",
     name: "SP1: Đăng ký khóa học cho học viên",
-    sql: `CREATE PROCEDURE RegisterCourse(
-    IN p_student_id INT,
-    IN p_course_id INT
-)
+    sql: `/* SP1: Đăng ký khóa học cho học viên
+   - Input: @student_id, @course_id
+   - Chức năng: tạo bản ghi Enrollment mới nếu chưa tồn tại, tránh trùng đăng ký
+   - Bảng liên quan: Enrollment
+   - Ràng buộc: chỉ cho phép một đăng ký ACTIVE cho mỗi (student, course)
+*/
+CREATE OR ALTER PROCEDURE sp_RegisterCourse
+    @student_id BIGINT,
+    @course_id BIGINT
+AS
 BEGIN
-    INSERT INTO Enrollments (student_id, course_id, status)
-    VALUES (p_student_id, p_course_id, 'Registered');
-END;`,
+    SET NOCOUNT ON;
+    
+    IF EXISTS (
+        SELECT 1
+        FROM Enrollment
+        WHERE student_id = @student_id
+          AND course_id = @course_id
+          AND status = 'ACTIVE'
+    )
+    BEGIN
+        THROW 50001, 'Sinh viên đã đăng ký khóa học này.', 1;
+        RETURN;
+    END;
+
+    INSERT INTO Enrollment (student_id, course_id, status, joined_at)
+    VALUES (@student_id, @course_id, 'ACTIVE', SYSDATETIME());
+
+    PRINT 'Đăng ký thành công!';
+END;
+-- TEST CASE:
+-- 1) Đăng ký mới (thành công):
+--    EXEC sp_RegisterCourse @student_id = 1, @course_id = 2;
+--    SELECT * FROM Enrollment WHERE student_id = 1 AND course_id = 2;
+-- 2) Đăng ký trùng (bị THROW lỗi):
+--    EXEC sp_RegisterCourse @student_id = 1, @course_id = 2;`,
   },
   {
     id: "sp2",
     name: "SP2: Cập nhật trạng thái đăng ký",
-    sql: `CREATE PROCEDURE UpdateRegistrationStatus(
-    IN p_registration_id INT,
-    IN p_new_status VARCHAR(50)
-)
+    sql: `/* SP2: Cập nhật trạng thái đăng ký
+   - Input: @enrollment_id, @new_status ('ACTIVE' / 'REMOVED')
+   - Chức năng: đổi trạng thái Enrollment
+   - Bảng liên quan: Enrollment
+*/
+CREATE OR ALTER PROCEDURE sp_UpdateEnrollmentStatus
+    @enrollment_id BIGINT,
+    @new_status    VARCHAR(20)
+AS
 BEGIN
-    UPDATE Enrollments
-    SET status = p_new_status
-    WHERE id = p_registration_id;
-END;`,
+    SET NOCOUNT ON;
+
+    UPDATE Enrollment
+    SET status = @new_status
+    WHERE enrollment_id = @enrollment_id;
+END;
+-- TEST CASE:
+-- 1) Chuyển 1 đăng ký sang REMOVED:
+--    EXEC sp_UpdateEnrollmentStatus @enrollment_id = 1, @new_status = 'REMOVED';
+--    SELECT * FROM Enrollment WHERE enrollment_id = 1;`,
   },
   {
     id: "sp3",
     name: "SP3: Ghi nhận điểm danh buổi học",
-    sql: `CREATE PROCEDURE RecordAttendance(
-    IN p_student_id INT,
-    IN p_session_id INT
-)
+    sql: `/* SP3: Ghi nhận điểm danh buổi học
+   - Input: @enrollment_id, @session_date, @status ('PRESENT' / 'ABSENT')
+   - Chức năng: upsert Attendance (nếu đã có thì update, nếu chưa thì insert)
+   - Bảng liên quan: Attendance
+*/
+CREATE OR ALTER PROCEDURE sp_TakeAttendance
+    @enrollment_id BIGINT,
+    @session_date  DATE,
+    @status        VARCHAR(20)
+AS
 BEGIN
-    INSERT INTO Attendance (student_id, session_id, attended, date)
-    VALUES (p_student_id, p_session_id, 1, NOW());
-END;`,
+    SET NOCOUNT ON;
+
+    MERGE INTO Attendance AS Target
+    USING (
+        SELECT @enrollment_id AS enrollment_id,
+               @session_date  AS session_date
+    ) AS Source
+    ON Target.enrollment_id = Source.enrollment_id
+       AND Target.session_date = Source.session_date
+    WHEN MATCHED THEN
+        UPDATE SET status = @status
+    WHEN NOT MATCHED THEN
+        INSERT (enrollment_id, session_date, status)
+        VALUES (@enrollment_id, @session_date, @status);
+END;
+-- TEST CASE:
+-- 1) Điểm danh mới:
+--    EXEC sp_TakeAttendance @enrollment_id = 1, @session_date = '2026-01-20', @status = 'PRESENT';
+--    SELECT * FROM Attendance WHERE enrollment_id = 1;
+-- 2) Sửa trạng thái buổi đã điểm danh:
+--    EXEC sp_TakeAttendance @enrollment_id = 1, @session_date = '2026-01-20', @status = 'ABSENT';`,
   },
   {
     id: "sp4",
     name: "SP4: Nộp bài tập và lưu lịch sử nộp",
-    sql: `CREATE PROCEDURE SubmitAssignment(
-    IN p_student_id INT,
-    IN p_assignment_id INT,
-    IN p_file_path VARCHAR(255)
-)
+    sql: `/* SP4: Nộp bài tập và lưu lịch sử nộp
+   - Input: @assignment_id, @student_id, @file_url
+   - Chức năng: upsert Submission cho (assignment, student)
+   - Bảng liên quan: Submission, Assignment
+*/
+CREATE OR ALTER PROCEDURE sp_SubmitAssignment
+    @assignment_id BIGINT,
+    @student_id    BIGINT,
+    @file_url      VARCHAR(255)
+AS
 BEGIN
-    INSERT INTO Submissions (student_id, assignment_id, file_path, submitted_at)
-    VALUES (p_student_id, p_assignment_id, p_file_path, NOW());
-    INSERT INTO SubmissionHistory (submission_id, event, timestamp)
-    VALUES (LAST_INSERT_ID(), 'Submitted', NOW());
-END;`,
+    SET NOCOUNT ON;
+
+    IF EXISTS (
+        SELECT 1
+        FROM Submission
+        WHERE assignment_id = @assignment_id
+          AND student_id   = @student_id
+    )
+    BEGIN
+        UPDATE Submission
+        SET file_url    = @file_url,
+            submitted_at = SYSDATETIME()
+        WHERE assignment_id = @assignment_id
+          AND student_id    = @student_id;
+    END
+    ELSE
+    BEGIN
+        INSERT INTO Submission (assignment_id, student_id, file_url, submitted_at)
+        VALUES (@assignment_id, @student_id, @file_url, SYSDATETIME());
+    END;
+END;
+-- TEST CASE:
+-- 1) Nộp mới:
+--    EXEC sp_SubmitAssignment @assignment_id = 1, @student_id = 1, @file_url = '/submit/test1.pdf';
+--    SELECT * FROM Submission WHERE assignment_id = 1 AND student_id = 1;
+-- 2) Nộp lại (cập nhật file_url + submitted_at):
+--    EXEC sp_SubmitAssignment @assignment_id = 1, @student_id = 1, @file_url = '/submit/test1_v2.pdf';`,
   },
   {
     id: "sp5",
     name: "SP5: Cập nhật tiến độ học tập của học viên trong khóa",
-    sql: `CREATE PROCEDURE UpdateProgress(
-    IN p_student_id INT,
-    IN p_course_id INT,
-    IN p_new_progress FLOAT
+    sql: `/* SP5: Cập nhật tiến độ học tập của học viên trong khóa
+   - Input: @course_id, @student_id
+   - Chức năng: tính % số Assignment đã nộp trên tổng Assignment của course
+   - Bảng liên quan: Assignment, Submission, Enrollment
+   - Kết quả: lưu vào Enrollment.progress (DECIMAL(5,2))
+*/
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.columns
+    WHERE Name = N'progress'
+      AND Object_ID = Object_ID(N'Enrollment')
 )
 BEGIN
-    UPDATE CourseProgress
-    SET progress = p_new_progress
-    WHERE student_id = p_student_id
-      AND course_id = p_course_id;
-END;`,
+    ALTER TABLE Enrollment
+    ADD progress DECIMAL(5,2) DEFAULT 0.0;
+END;
+
+CREATE OR ALTER PROCEDURE sp_UpdateStudentProgress
+    @course_id  BIGINT,
+    @student_id BIGINT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @total_assign INT;
+    DECLARE @done_assign  INT;
+    DECLARE @percent      DECIMAL(5,2);
+
+    SELECT @total_assign = COUNT(*)
+    FROM Assignment
+    WHERE course_id = @course_id;
+
+    SELECT @done_assign = COUNT(*)
+    FROM Submission  s
+    JOIN Assignment  a ON s.assignment_id = a.assignment_id
+    WHERE a.course_id = @course_id
+      AND s.student_id = @student_id;
+
+    IF @total_assign = 0
+        SET @percent = 100;
+    ELSE
+        SET @percent = (@done_assign * 100.0) / @total_assign;
+
+    UPDATE Enrollment
+    SET progress = @percent
+    WHERE course_id = @course_id
+      AND student_id = @student_id;
+END;
+-- TEST CASE:
+-- 1) Cập nhật tiến độ cho student 1, course 1:
+--    EXEC sp_UpdateStudentProgress @course_id = 1, @student_id = 1;
+--    SELECT * FROM Enrollment WHERE course_id = 1 AND student_id = 1;`,
   },
 ];
 
@@ -98,77 +230,186 @@ const triggers: SqlOption[] = [
   {
     id: "t1",
     name: "T1: Mã hóa mật khẩu trước khi insert/update User",
-    sql: `CREATE TRIGGER encrypt_password_before_insert
-BEFORE INSERT ON Users
-FOR EACH ROW
+    sql: `/* T1: Mã hóa mật khẩu trước khi insert User
+   - Bảng: Users
+   - Kiểu: INSTEAD OF INSERT
+   - Chức năng: hash password_hash bằng SHA2_256 trước khi lưu
+*/
+CREATE OR ALTER TRIGGER tr_EncryptPassword
+ON Users
+INSTEAD OF INSERT
+AS
 BEGIN
-    SET NEW.password = MD5(NEW.password);
-END;
+    SET NOCOUNT ON;
 
-CREATE TRIGGER encrypt_password_before_update
-BEFORE UPDATE ON Users
-FOR EACH ROW
-BEGIN
-    SET NEW.password = MD5(NEW.password);
-END;`,
+    INSERT INTO Users (email, password_hash, first_name, last_name, role, status, created_at)
+    SELECT 
+        email,
+        CONVERT(VARCHAR(255), HASHBYTES('SHA2_256', password_hash), 2),
+        first_name,
+        last_name,
+        role,
+        status,
+        created_at
+    FROM inserted;
+END;
+-- TEST CASE:
+-- 1) Insert user mới:
+--    INSERT INTO Users (email, password_hash, first_name, last_name, role, status)
+--    VALUES ('test_hash@lms.com', 'PlainPassword', N'Test', N'User', 'STUDENT', 'ACTIVE');
+--    SELECT email, password_hash FROM Users WHERE email = 'test_hash@lms.com';`,
   },
   {
     id: "t2",
     name: "T2: Kiểm tra không cho đăng ký trùng khóa học",
-    sql: `CREATE TRIGGER no_duplicate_registration
-BEFORE INSERT ON Enrollments
-FOR EACH ROW
+    sql: `/* T2: Chặn đăng ký trùng khóa học
+   - Bảng: Enrollment
+   - Kiểu: AFTER INSERT
+   - Chức năng: nếu có >1 bản ghi ACTIVE cho (student_id, course_id) thì RAISERROR + ROLLBACK
+*/
+CREATE OR ALTER TRIGGER tr_CheckDuplicateEnrollment
+ON Enrollment
+AFTER INSERT
+AS
 BEGIN
+    SET NOCOUNT ON;
+
     IF EXISTS (
-        SELECT 1 FROM Enrollments 
-        WHERE student_id = NEW.student_id 
-          AND course_id = NEW.course_id
-    ) THEN
-        SIGNAL SQLSTATE '45000'
-            SET MESSAGE_TEXT = 'Học viên đã đăng ký khóa học này rồi.';
-    END IF;
-END;`,
+        SELECT student_id, course_id, COUNT(*) AS cnt
+        FROM Enrollment
+        WHERE status = 'ACTIVE'
+        GROUP BY student_id, course_id
+        HAVING COUNT(*) > 1
+    )
+    BEGIN
+        RAISERROR('Học viên đã đăng ký khóa học này rồi!', 16, 1);
+        ROLLBACK TRANSACTION;
+    END;
+END;
+-- TEST CASE:
+-- 1) Thử insert trùng:
+--    INSERT INTO Enrollment (course_id, student_id, status) VALUES (1, 1, 'ACTIVE');
+--    -> Expect: RAISERROR + ROLLBACK (không thêm bản ghi mới);`,
   },
   {
     id: "t3",
     name: "T3: Cập nhật số lượng học viên của khóa học",
-    sql: `CREATE TRIGGER update_course_count_after_insert
-AFTER INSERT ON Enrollments
-FOR EACH ROW
+    sql: `/* T3: Cập nhật Course.student_count khi Enrollment thay đổi
+   - Bảng: Enrollment (trigger), Course (cập nhật)
+   - Kiểu: AFTER INSERT, DELETE, UPDATE
+   - Chức năng: student_count = số Enrollment ACTIVE
+*/
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.columns
+    WHERE Name = N'student_count'
+      AND Object_ID = Object_ID(N'Course')
+)
 BEGIN
-    UPDATE Courses
-    SET student_count = student_count + 1
-    WHERE id = NEW.course_id;
-END;`,
+    ALTER TABLE Course
+    ADD student_count INT DEFAULT 0;
+END;
+
+CREATE OR ALTER TRIGGER tr_UpdateStudentCount
+ON Enrollment
+AFTER INSERT, DELETE, UPDATE
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    UPDATE C
+    SET C.student_count = (
+        SELECT COUNT(*)
+        FROM Enrollment E
+        WHERE E.course_id = C.course_id
+          AND E.status   = 'ACTIVE'
+    )
+    FROM Course C
+    WHERE C.course_id IN (
+        SELECT course_id FROM inserted
+        UNION
+        SELECT course_id FROM deleted
+    );
+END;
+-- TEST CASE:
+-- 1) Thêm Enrollment:
+--    INSERT INTO Enrollment (course_id, student_id, status) VALUES (1, 5, 'ACTIVE');
+--    SELECT * FROM Course WHERE course_id = 1;
+-- 2) Đổi status / xóa Enrollment và xem student_count thay đổi;`,
   },
   {
     id: "t4",
     name: "T4: Đánh dấu bài nộp trễ hạn",
-    sql: `CREATE TRIGGER mark_late_submission
-AFTER INSERT ON Submissions
-FOR EACH ROW
+    sql: `/* T4: Đánh dấu Submission trễ hạn
+   - Bảng: Submission (trigger), Assignment (deadline)
+   - Kiểu: AFTER INSERT
+   - Chức năng: nếu submitted_at > deadline thì is_late = 1
+*/
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.columns
+    WHERE Name = N'is_late'
+      AND Object_ID = Object_ID(N'Submission')
+)
 BEGIN
-    DECLARE due DATETIME;
-    SELECT due_date INTO due FROM Assignments WHERE id = NEW.assignment_id;
-    IF NEW.submitted_at > due THEN
-        UPDATE Submissions
-        SET is_late = 1
-        WHERE id = NEW.id;
-    END IF;
-END;`,
+    ALTER TABLE Submission
+    ADD is_late BIT DEFAULT 0;
+END;
+
+CREATE OR ALTER TRIGGER tr_MarkLateSubmission
+ON Submission
+AFTER INSERT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    UPDATE S
+    SET is_late = 1
+    FROM Submission S
+    JOIN inserted I ON S.submission_id = I.submission_id
+    JOIN Assignment A ON I.assignment_id = A.assignment_id
+    WHERE I.submitted_at > A.deadline;
+END;
+-- TEST CASE:
+-- 1) Nộp bài sau deadline:
+--    INSERT INTO Submission (assignment_id, student_id, file_url, submitted_at)
+--    VALUES (1, 1, '/submit/late.pdf', DATEADD(DAY, 10, GETDATE()));
+--    SELECT * FROM Submission WHERE file_url = '/submit/late.pdf';`,
   },
   {
     id: "t5",
     name: "T5: Tự động cập nhật tiến độ khi có sự kiện liên quan",
-    sql: `CREATE TRIGGER update_progress_after_attendance
-AFTER INSERT ON Attendance
-FOR EACH ROW
+    sql: `/* T5: Tự động cập nhật tiến độ khi có Submission mới
+   - Bảng: Submission (trigger), Assignment, Enrollment
+   - Kiểu: AFTER INSERT, UPDATE
+   - Chức năng: lấy course_id, student_id rồi gọi sp_UpdateStudentProgress
+*/
+CREATE OR ALTER TRIGGER tr_AutoUpdateProgress
+ON Submission
+AFTER INSERT, UPDATE
+AS
 BEGIN
-    UPDATE CourseProgress
-    SET progress = progress + 5
-    WHERE student_id = NEW.student_id 
-      AND course_id = NEW.course_id;
-END;`,
+    SET NOCOUNT ON;
+
+    DECLARE @course_id  BIGINT;
+    DECLARE @student_id BIGINT;
+
+    SELECT TOP 1
+        @student_id = I.student_id,
+        @course_id  = A.course_id
+    FROM inserted I
+    JOIN Assignment A ON I.assignment_id = A.assignment_id;
+
+    IF @course_id IS NOT NULL AND @student_id IS NOT NULL
+    BEGIN
+        EXEC sp_UpdateStudentProgress @course_id = @course_id,
+                                      @student_id = @student_id;
+    END;
+END;
+-- TEST CASE:
+-- 1) Update điểm/nộp bài:
+--    UPDATE Submission SET score = 9.0 WHERE submission_id = 1;
+--    SELECT * FROM Enrollment WHERE course_id = (SELECT course_id FROM Assignment WHERE assignment_id = 1);`,
   },
 ];
 
@@ -176,55 +417,108 @@ const functions: SqlOption[] = [
   {
     id: "f1",
     name: "F1: Tính tỷ lệ điểm danh của học viên theo khóa",
-    sql: `CREATE FUNCTION AttendanceRate(
-    p_student_id INT,
-    p_course_id INT
-) RETURNS FLOAT
+    sql: `/* F1: Tính tỷ lệ điểm danh
+   - Input: @enrollment_id
+   - Công thức: (số buổi PRESENT / tổng số buổi) * 100
+   - Bảng: Attendance
+*/
+CREATE OR ALTER FUNCTION fn_AttendanceRate
+(
+    @enrollment_id BIGINT
+)
+RETURNS DECIMAL(5,2)
+AS
 BEGIN
-    DECLARE attended INT;
-    DECLARE total INT;
-    SELECT COUNT(*) INTO attended
+    DECLARE @total_sessions   INT;
+    DECLARE @present_sessions INT;
+
+    SELECT @total_sessions = COUNT(*)
     FROM Attendance
-    WHERE student_id = p_student_id AND course_id = p_course_id AND attended = 1;
-    SELECT COUNT(*) INTO total
-    FROM Sessions
-    WHERE course_id = p_course_id;
-    RETURN (attended / total) * 100;
-END;`,
+    WHERE enrollment_id = @enrollment_id;
+
+    SELECT @present_sessions = COUNT(*)
+    FROM Attendance
+    WHERE enrollment_id = @enrollment_id
+      AND status        = 'PRESENT';
+
+    IF @total_sessions = 0
+        RETURN 100.0;
+
+    RETURN (@present_sessions * 100.0) / @total_sessions;
+END;
+-- TEST CASE:
+-- 1) SELECT dbo.fn_AttendanceRate(1) AS AttendanceRate_Enroll1;`,
   },
   {
     id: "f2",
     name: "F2: Tính tỷ lệ hoàn thành bài tập",
-    sql: `CREATE FUNCTION AssignmentCompletionRate(
-    p_student_id INT,
-    p_course_id INT
-) RETURNS FLOAT
+    sql: `/* F2: Tính tỷ lệ hoàn thành bài tập
+   - Input: @student_id, @course_id
+   - Công thức: (số bài đã nộp / tổng assignment của course) * 100
+   - Bảng: Assignment, Submission
+*/
+CREATE OR ALTER FUNCTION fn_AssignmentCompletion
+(
+    @student_id BIGINT,
+    @course_id  BIGINT
+)
+RETURNS DECIMAL(5,2)
+AS
 BEGIN
-    DECLARE completed INT;
-    DECLARE total INT;
-    SELECT COUNT(*) INTO completed
-    FROM Submissions
-    WHERE student_id = p_student_id AND course_id = p_course_id;
-    SELECT COUNT(*) INTO total
-    FROM Assignments
-    WHERE course_id = p_course_id;
-    RETURN (completed / total) * 100;
-END;`,
+    DECLARE @total     INT;
+    DECLARE @submitted INT;
+
+    SELECT @total = COUNT(*)
+    FROM Assignment
+    WHERE course_id = @course_id;
+
+    SELECT @submitted = COUNT(*)
+    FROM Submission s
+    JOIN Assignment a ON s.assignment_id = a.assignment_id
+    WHERE a.course_id  = @course_id
+      AND s.student_id = @student_id;
+
+    IF @total = 0
+        RETURN 100.0;
+
+    RETURN (@submitted * 100.0) / @total;
+END;
+-- TEST CASE:
+-- 1) SELECT dbo.fn_AssignmentCompletion(1, 1) AS AssignmentCompletion_Student1_Course1;`,
   },
   {
     id: "f3",
-    name: "F3: Tính tiến độ tổng hợp",
-    sql: `CREATE FUNCTION OverallProgress(
-    p_student_id INT,
-    p_course_id INT
-) RETURNS FLOAT
+    name: "F3: Tính tiến độ tổng hợp (progress_percent)",
+    sql: `/* F3: Tính tiến độ tổng hợp (progress_percent)
+   - Input: @enrollment_id
+   - Công thức: 0.3 * AttendanceRate + 0.7 * AssignmentCompletion
+   - Bảng: Enrollment, Attendance, Assignment, Submission
+*/
+CREATE OR ALTER FUNCTION fn_TotalProgress
+(
+    @enrollment_id BIGINT
+)
+RETURNS DECIMAL(5,2)
+AS
 BEGIN
-    DECLARE attendance_rate FLOAT;
-    DECLARE assignment_rate FLOAT;
-    SET attendance_rate = AttendanceRate(p_student_id, p_course_id);
-    SET assignment_rate = AssignmentCompletionRate(p_student_id, p_course_id);
-    RETURN (attendance_rate + assignment_rate) / 2;
-END;`,
+    DECLARE @att_rate   DECIMAL(5,2);
+    DECLARE @assign_rate DECIMAL(5,2);
+    DECLARE @student_id BIGINT;
+    DECLARE @course_id  BIGINT;
+
+    SELECT
+        @student_id = student_id,
+        @course_id  = course_id
+    FROM Enrollment
+    WHERE enrollment_id = @enrollment_id;
+
+    SET @att_rate   = dbo.fn_AttendanceRate(@enrollment_id);
+    SET @assign_rate = dbo.fn_AssignmentCompletion(@student_id, @course_id);
+
+    RETURN (@att_rate * 0.3) + (@assign_rate * 0.7);
+END;
+-- TEST CASE:
+-- 1) SELECT dbo.fn_TotalProgress(1) AS TotalProgress_Enroll1;`,
   },
 ];
 
