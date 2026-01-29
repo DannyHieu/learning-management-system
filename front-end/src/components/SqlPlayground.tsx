@@ -23,17 +23,14 @@ interface TabConfig {
   options: SqlOption[];
 }
 
-// SQL definitions from the SQL file
 // SQL definitions for MSSQL (LMS_DB)
+// Source files: front-end/sql/MSSQL/STORED_PROCEDURES.sql, TRIGGERS.sql, FUNCTIONS.sql, CURSORS.sql
 const storedProcedures: SqlOption[] = [
   {
     id: "sp1",
-    name: "SP1: Đăng ký khóa học cho học viên",
+    name: "SP1: Đăng ký khóa học",
     sql: `/* SP1: Đăng ký khóa học cho học viên
    - Input: @student_id, @course_id
-   - Chức năng: tạo bản ghi Enrollment mới nếu chưa tồn tại, tránh trùng đăng ký
-   - Bảng liên quan: Enrollment
-   - Ràng buộc: chỉ cho phép một đăng ký ACTIVE cho mỗi (student, course)
 */
 CREATE OR ALTER PROCEDURE sp_RegisterCourse
     @student_id BIGINT,
@@ -41,38 +38,25 @@ CREATE OR ALTER PROCEDURE sp_RegisterCourse
 AS
 BEGIN
     SET NOCOUNT ON;
-    
-    IF EXISTS (
-        SELECT 1
-        FROM Enrollment
-        WHERE student_id = @student_id
-          AND course_id = @course_id
-          AND status = 'ACTIVE'
-    )
+    IF EXISTS (SELECT 1 FROM Enrollment WHERE student_id = @student_id AND course_id = @course_id AND status = 'ACTIVE')
     BEGIN
         THROW 50001, 'Sinh viên đã đăng ký khóa học này.', 1;
         RETURN;
     END;
-
     INSERT INTO Enrollment (student_id, course_id, status, joined_at)
     VALUES (@student_id, @course_id, 'ACTIVE', SYSDATETIME());
-
     PRINT 'Đăng ký thành công!';
 END;
 -- TEST CASE:
--- 1) Đăng ký mới (thành công):
+-- 1) Đăng ký mới:
 --    EXEC sp_RegisterCourse @student_id = 1, @course_id = 2;
---    SELECT * FROM Enrollment WHERE student_id = 1 AND course_id = 2;
--- 2) Đăng ký trùng (bị THROW lỗi):
---    EXEC sp_RegisterCourse @student_id = 1, @course_id = 2;`,
+--    SELECT * FROM Enrollment WHERE student_id = 1 AND course_id = 2;`,
   },
   {
     id: "sp2",
     name: "SP2: Cập nhật trạng thái đăng ký",
     sql: `/* SP2: Cập nhật trạng thái đăng ký
-   - Input: @enrollment_id, @new_status ('ACTIVE' / 'REMOVED')
-   - Chức năng: đổi trạng thái Enrollment
-   - Bảng liên quan: Enrollment
+   - Chức năng: đổi trạng thái Enrollment ('ACTIVE' / 'REMOVED')
 */
 CREATE OR ALTER PROCEDURE sp_UpdateEnrollmentStatus
     @enrollment_id BIGINT,
@@ -80,23 +64,18 @@ CREATE OR ALTER PROCEDURE sp_UpdateEnrollmentStatus
 AS
 BEGIN
     SET NOCOUNT ON;
-
-    UPDATE Enrollment
-    SET status = @new_status
-    WHERE enrollment_id = @enrollment_id;
+    UPDATE Enrollment SET status = @new_status WHERE enrollment_id = @enrollment_id;
 END;
 -- TEST CASE:
--- 1) Chuyển 1 đăng ký sang REMOVED:
+-- 1) Chuyển trạng thái sang REMOVED:
 --    EXEC sp_UpdateEnrollmentStatus @enrollment_id = 1, @new_status = 'REMOVED';
 --    SELECT * FROM Enrollment WHERE enrollment_id = 1;`,
   },
   {
     id: "sp3",
-    name: "SP3: Ghi nhận điểm danh buổi học",
+    name: "SP3: Ghi nhận điểm danh",
     sql: `/* SP3: Ghi nhận điểm danh buổi học
    - Input: @enrollment_id, @session_date, @status ('PRESENT' / 'ABSENT')
-   - Chức năng: upsert Attendance (nếu đã có thì update, nếu chưa thì insert)
-   - Bảng liên quan: Attendance
 */
 CREATE OR ALTER PROCEDURE sp_TakeAttendance
     @enrollment_id BIGINT,
@@ -105,34 +84,21 @@ CREATE OR ALTER PROCEDURE sp_TakeAttendance
 AS
 BEGIN
     SET NOCOUNT ON;
-
     MERGE INTO Attendance AS Target
-    USING (
-        SELECT @enrollment_id AS enrollment_id,
-               @session_date  AS session_date
-    ) AS Source
-    ON Target.enrollment_id = Source.enrollment_id
-       AND Target.session_date = Source.session_date
-    WHEN MATCHED THEN
-        UPDATE SET status = @status
-    WHEN NOT MATCHED THEN
-        INSERT (enrollment_id, session_date, status)
-        VALUES (@enrollment_id, @session_date, @status);
+    USING (SELECT @enrollment_id AS enrollment_id, @session_date AS session_date) AS Source
+    ON Target.enrollment_id = Source.enrollment_id AND Target.session_date = Source.session_date
+    WHEN MATCHED THEN UPDATE SET status = @status
+    WHEN NOT MATCHED THEN INSERT (enrollment_id, session_date, status) VALUES (@enrollment_id, @session_date, @status);
 END;
 -- TEST CASE:
 -- 1) Điểm danh mới:
 --    EXEC sp_TakeAttendance @enrollment_id = 1, @session_date = '2026-01-20', @status = 'PRESENT';
---    SELECT * FROM Attendance WHERE enrollment_id = 1;
--- 2) Sửa trạng thái buổi đã điểm danh:
---    EXEC sp_TakeAttendance @enrollment_id = 1, @session_date = '2026-01-20', @status = 'ABSENT';`,
+--    SELECT * FROM Attendance WHERE enrollment_id = 1;`,
   },
   {
     id: "sp4",
-    name: "SP4: Nộp bài tập và lưu lịch sử nộp",
+    name: "SP4: Nộp bài tập",
     sql: `/* SP4: Nộp bài tập và lưu lịch sử nộp
-   - Input: @assignment_id, @student_id, @file_url
-   - Chức năng: upsert Submission cho (assignment, student)
-   - Bảng liên quan: Submission, Assignment
 */
 CREATE OR ALTER PROCEDURE sp_SubmitAssignment
     @assignment_id BIGINT,
@@ -141,19 +107,10 @@ CREATE OR ALTER PROCEDURE sp_SubmitAssignment
 AS
 BEGIN
     SET NOCOUNT ON;
-
-    IF EXISTS (
-        SELECT 1
-        FROM Submission
-        WHERE assignment_id = @assignment_id
-          AND student_id   = @student_id
-    )
+    IF EXISTS (SELECT 1 FROM Submission WHERE assignment_id = @assignment_id AND student_id = @student_id)
     BEGIN
-        UPDATE Submission
-        SET file_url    = @file_url,
-            submitted_at = SYSDATETIME()
-        WHERE assignment_id = @assignment_id
-          AND student_id    = @student_id;
+        UPDATE Submission SET file_url = @file_url, submitted_at = SYSDATETIME()
+        WHERE assignment_id = @assignment_id AND student_id = @student_id;
     END
     ELSE
     BEGIN
@@ -164,63 +121,28 @@ END;
 -- TEST CASE:
 -- 1) Nộp mới:
 --    EXEC sp_SubmitAssignment @assignment_id = 1, @student_id = 1, @file_url = '/submit/test1.pdf';
---    SELECT * FROM Submission WHERE assignment_id = 1 AND student_id = 1;
--- 2) Nộp lại (cập nhật file_url + submitted_at):
---    EXEC sp_SubmitAssignment @assignment_id = 1, @student_id = 1, @file_url = '/submit/test1_v2.pdf';`,
+--    SELECT * FROM Submission WHERE assignment_id = 1 AND student_id = 1;`,
   },
   {
     id: "sp5",
-    name: "SP5: Cập nhật tiến độ học tập của học viên trong khóa",
+    name: "SP5: Cập nhật tiến độ học tập",
     sql: `/* SP5: Cập nhật tiến độ học tập của học viên trong khóa
-   - Input: @course_id, @student_id
-   - Chức năng: tính % số Assignment đã nộp trên tổng Assignment của course
-   - Bảng liên quan: Assignment, Submission, Enrollment
-   - Kết quả: lưu vào Enrollment.progress (DECIMAL(5,2))
 */
-IF NOT EXISTS (
-    SELECT 1
-    FROM sys.columns
-    WHERE Name = N'progress'
-      AND Object_ID = Object_ID(N'Enrollment')
-)
-BEGIN
-    ALTER TABLE Enrollment
-    ADD progress DECIMAL(5,2) DEFAULT 0.0;
-END;
-
 CREATE OR ALTER PROCEDURE sp_UpdateStudentProgress
     @course_id  BIGINT,
     @student_id BIGINT
 AS
 BEGIN
     SET NOCOUNT ON;
-
-    DECLARE @total_assign INT;
-    DECLARE @done_assign  INT;
-    DECLARE @percent      DECIMAL(5,2);
-
-    SELECT @total_assign = COUNT(*)
-    FROM Assignment
-    WHERE course_id = @course_id;
-
-    SELECT @done_assign = COUNT(*)
-    FROM Submission  s
-    JOIN Assignment  a ON s.assignment_id = a.assignment_id
-    WHERE a.course_id = @course_id
-      AND s.student_id = @student_id;
-
-    IF @total_assign = 0
-        SET @percent = 100;
-    ELSE
-        SET @percent = (@done_assign * 100.0) / @total_assign;
-
-    UPDATE Enrollment
-    SET progress = @percent
-    WHERE course_id = @course_id
-      AND student_id = @student_id;
+    DECLARE @total_assign INT, @done_assign INT, @percent DECIMAL(5,2);
+    SELECT @total_assign = COUNT(*) FROM Assignment WHERE course_id = @course_id;
+    SELECT @done_assign = COUNT(*) FROM Submission s JOIN Assignment a ON s.assignment_id = a.assignment_id
+    WHERE a.course_id = @course_id AND s.student_id = @student_id;
+    SET @percent = CASE WHEN @total_assign = 0 THEN 100 ELSE (@done_assign * 100.0) / @total_assign END;
+    UPDATE Enrollment SET progress = @percent WHERE course_id = @course_id AND student_id = @student_id;
 END;
 -- TEST CASE:
--- 1) Cập nhật tiến độ cho student 1, course 1:
+-- 1) Cập nhật tiến độ:
 --    EXEC sp_UpdateStudentProgress @course_id = 1, @student_id = 1;
 --    SELECT * FROM Enrollment WHERE course_id = 1 AND student_id = 1;`,
   },
@@ -229,58 +151,33 @@ END;
 const triggers: SqlOption[] = [
   {
     id: "t1",
-    name: "T1: Mã hóa mật khẩu trước khi insert/update User",
-    sql: `/* T1: Mã hóa mật khẩu trước khi insert User
-   - Bảng: Users
-   - Kiểu: INSTEAD OF INSERT
-   - Chức năng: hash password_hash bằng SHA2_256 trước khi lưu
+    name: "T1: Mã hóa mật khẩu",
+    sql: `/* T1: Trigger mã hóa mật khẩu trước khi insert User
 */
 CREATE OR ALTER TRIGGER tr_EncryptPassword
-ON Users
-INSTEAD OF INSERT
+ON Users INSTEAD OF INSERT
 AS
 BEGIN
     SET NOCOUNT ON;
-
     INSERT INTO Users (email, password_hash, first_name, last_name, role, status, created_at)
-    SELECT 
-        email,
-        CONVERT(VARCHAR(255), HASHBYTES('SHA2_256', password_hash), 2),
-        first_name,
-        last_name,
-        role,
-        status,
-        created_at
-    FROM inserted;
+    SELECT email, CONVERT(VARCHAR(255), HASHBYTES('SHA2_256', password_hash), 2), first_name, last_name, role, status, created_at FROM inserted;
 END;
 -- TEST CASE:
 -- 1) Insert user mới:
---    INSERT INTO Users (email, password_hash, first_name, last_name, role, status)
---    VALUES ('test_hash@lms.com', 'PlainPassword', N'Test', N'User', 'STUDENT', 'ACTIVE');
---    SELECT email, password_hash FROM Users WHERE email = 'test_hash@lms.com';`,
+--    INSERT INTO Users (email, password_hash, first_name, last_name, role, status) VALUES ('test@lms.com', 'PlainPassword', N'Test', N'User', 'STUDENT', 'ACTIVE');
+--    SELECT * FROM Users WHERE email = 'test@lms.com';`,
   },
   {
     id: "t2",
-    name: "T2: Kiểm tra không cho đăng ký trùng khóa học",
-    sql: `/* T2: Chặn đăng ký trùng khóa học
-   - Bảng: Enrollment
-   - Kiểu: AFTER INSERT
-   - Chức năng: nếu có >1 bản ghi ACTIVE cho (student_id, course_id) thì RAISERROR + ROLLBACK
+    name: "T2: Chặn đăng ký trùng",
+    sql: `/* T2: Trigger kiểm tra không cho đăng ký trùng khóa học
 */
 CREATE OR ALTER TRIGGER tr_CheckDuplicateEnrollment
-ON Enrollment
-AFTER INSERT
+ON Enrollment AFTER INSERT
 AS
 BEGIN
     SET NOCOUNT ON;
-
-    IF EXISTS (
-        SELECT student_id, course_id, COUNT(*) AS cnt
-        FROM Enrollment
-        WHERE status = 'ACTIVE'
-        GROUP BY student_id, course_id
-        HAVING COUNT(*) > 1
-    )
+    IF EXISTS (SELECT student_id, course_id, COUNT(*) FROM Enrollment WHERE status = 'ACTIVE' GROUP BY student_id, course_id HAVING COUNT(*) > 1)
     BEGIN
         RAISERROR('Học viên đã đăng ký khóa học này rồi!', 16, 1);
         ROLLBACK TRANSACTION;
@@ -288,297 +185,173 @@ BEGIN
 END;
 -- TEST CASE:
 -- 1) Thử insert trùng:
---    INSERT INTO Enrollment (course_id, student_id, status) VALUES (1, 1, 'ACTIVE');
---    -> Expect: RAISERROR + ROLLBACK (không thêm bản ghi mới);`,
+--    INSERT INTO Enrollment (course_id, student_id, status) VALUES (1, 1, 'ACTIVE');`,
   },
   {
     id: "t3",
-    name: "T3: Cập nhật số lượng học viên của khóa học",
-    sql: `/* T3: Cập nhật Course.student_count khi Enrollment thay đổi
-   - Bảng: Enrollment (trigger), Course (cập nhật)
-   - Kiểu: AFTER INSERT, DELETE, UPDATE
-   - Chức năng: student_count = số Enrollment ACTIVE
+    name: "T3: Cập nhật số lượng học viên",
+    sql: `/* T3: Trigger cập nhật số lượng học viên của khóa học
 */
-IF NOT EXISTS (
-    SELECT 1
-    FROM sys.columns
-    WHERE Name = N'student_count'
-      AND Object_ID = Object_ID(N'Course')
-)
-BEGIN
-    ALTER TABLE Course
-    ADD student_count INT DEFAULT 0;
-END;
-
 CREATE OR ALTER TRIGGER tr_UpdateStudentCount
-ON Enrollment
-AFTER INSERT, DELETE, UPDATE
+ON Enrollment AFTER INSERT, DELETE, UPDATE
 AS
 BEGIN
     SET NOCOUNT ON;
-
-    UPDATE C
-    SET C.student_count = (
-        SELECT COUNT(*)
-        FROM Enrollment E
-        WHERE E.course_id = C.course_id
-          AND E.status   = 'ACTIVE'
-    )
-    FROM Course C
-    WHERE C.course_id IN (
-        SELECT course_id FROM inserted
-        UNION
-        SELECT course_id FROM deleted
-    );
+    UPDATE C SET C.student_count = (SELECT COUNT(*) FROM Enrollment E WHERE E.course_id = C.course_id AND E.status = 'ACTIVE')
+    FROM Course C WHERE C.course_id IN (SELECT course_id FROM inserted UNION SELECT course_id FROM deleted);
 END;
 -- TEST CASE:
 -- 1) Thêm Enrollment:
 --    INSERT INTO Enrollment (course_id, student_id, status) VALUES (1, 5, 'ACTIVE');
---    SELECT * FROM Course WHERE course_id = 1;
--- 2) Đổi status / xóa Enrollment và xem student_count thay đổi;`,
+--    SELECT * FROM Course WHERE course_id = 1;`,
   },
   {
     id: "t4",
     name: "T4: Đánh dấu bài nộp trễ hạn",
-    sql: `/* T4: Đánh dấu Submission trễ hạn
-   - Bảng: Submission (trigger), Assignment (deadline)
-   - Kiểu: AFTER INSERT
-   - Chức năng: nếu submitted_at > deadline thì is_late = 1
+    sql: `/* T4: Trigger đánh dấu bài nộp trễ hạn
 */
-IF NOT EXISTS (
-    SELECT 1
-    FROM sys.columns
-    WHERE Name = N'is_late'
-      AND Object_ID = Object_ID(N'Submission')
-)
-BEGIN
-    ALTER TABLE Submission
-    ADD is_late BIT DEFAULT 0;
-END;
-
 CREATE OR ALTER TRIGGER tr_MarkLateSubmission
-ON Submission
-AFTER INSERT
+ON Submission AFTER INSERT
 AS
 BEGIN
     SET NOCOUNT ON;
-
-    UPDATE S
-    SET is_late = 1
-    FROM Submission S
-    JOIN inserted I ON S.submission_id = I.submission_id
-    JOIN Assignment A ON I.assignment_id = A.assignment_id
-    WHERE I.submitted_at > A.deadline;
+    UPDATE S SET is_late = 1 FROM Submission S JOIN inserted I ON S.submission_id = I.submission_id
+    JOIN Assignment A ON I.assignment_id = A.assignment_id WHERE I.submitted_at > A.deadline;
 END;
 -- TEST CASE:
 -- 1) Nộp bài sau deadline:
---    INSERT INTO Submission (assignment_id, student_id, file_url, submitted_at)
---    VALUES (1, 1, '/submit/late.pdf', DATEADD(DAY, 10, GETDATE()));
+--    INSERT INTO Submission (assignment_id, student_id, file_url, submitted_at) VALUES (1, 1, '/submit/late.pdf', DATEADD(DAY, 10, GETDATE()));
 --    SELECT * FROM Submission WHERE file_url = '/submit/late.pdf';`,
   },
   {
     id: "t5",
-    name: "T5: Tự động cập nhật tiến độ khi có sự kiện liên quan",
-    sql: `/* T5: Tự động cập nhật tiến độ khi có Submission mới
-   - Bảng: Submission (trigger), Assignment, Enrollment
-   - Kiểu: AFTER INSERT, UPDATE
-   - Chức năng: lấy course_id, student_id rồi gọi sp_UpdateStudentProgress
+    name: "T5: Tự động cập nhật tiến độ",
+    sql: `/* T5: Trigger tự động cập nhật tiến độ khi có Submission
 */
 CREATE OR ALTER TRIGGER tr_AutoUpdateProgress
-ON Submission
-AFTER INSERT, UPDATE
+ON Submission AFTER INSERT, UPDATE
 AS
 BEGIN
     SET NOCOUNT ON;
-
-    DECLARE @course_id  BIGINT;
-    DECLARE @student_id BIGINT;
-
-    SELECT TOP 1
-        @student_id = I.student_id,
-        @course_id  = A.course_id
-    FROM inserted I
-    JOIN Assignment A ON I.assignment_id = A.assignment_id;
-
+    DECLARE @course_id BIGINT, @student_id BIGINT;
+    SELECT TOP 1 @student_id = I.student_id, @course_id = A.course_id FROM inserted I JOIN Assignment A ON I.assignment_id = A.assignment_id;
     IF @course_id IS NOT NULL AND @student_id IS NOT NULL
-    BEGIN
-        EXEC sp_UpdateStudentProgress @course_id = @course_id,
-                                      @student_id = @student_id;
-    END;
+        EXEC sp_UpdateStudentProgress @course_id = @course_id, @student_id = @student_id;
 END;
 -- TEST CASE:
--- 1) Update điểm/nộp bài:
+-- 1) Update nộp bài:
 --    UPDATE Submission SET score = 9.0 WHERE submission_id = 1;
---    SELECT * FROM Enrollment WHERE course_id = (SELECT course_id FROM Assignment WHERE assignment_id = 1);`,
+--    SELECT * FROM Enrollment WHERE enrollment_id = 1;`,
   },
 ];
 
 const functions: SqlOption[] = [
   {
     id: "f1",
-    name: "F1: Tính tỷ lệ điểm danh của học viên theo khóa",
-    sql: `/* F1: Tính tỷ lệ điểm danh
-   - Input: @enrollment_id
-   - Công thức: (số buổi PRESENT / tổng số buổi) * 100
-   - Bảng: Attendance
+    name: "F1: Tỷ lệ điểm danh",
+    sql: `/* F1: Tính tỷ lệ điểm danh của học viên theo khóa
 */
-CREATE OR ALTER FUNCTION fn_AttendanceRate
-(
-    @enrollment_id BIGINT
-)
-RETURNS DECIMAL(5,2)
-AS
+CREATE OR ALTER FUNCTION fn_AttendanceRate (@enrollment_id BIGINT)
+RETURNS DECIMAL(5,2) AS
 BEGIN
-    DECLARE @total_sessions   INT;
-    DECLARE @present_sessions INT;
-
-    SELECT @total_sessions = COUNT(*)
-    FROM Attendance
-    WHERE enrollment_id = @enrollment_id;
-
-    SELECT @present_sessions = COUNT(*)
-    FROM Attendance
-    WHERE enrollment_id = @enrollment_id
-      AND status        = 'PRESENT';
-
-    IF @total_sessions = 0
-        RETURN 100.0;
-
-    RETURN (@present_sessions * 100.0) / @total_sessions;
+    DECLARE @total_sessions INT, @present_sessions INT;
+    SELECT @total_sessions = COUNT(*) FROM Attendance WHERE enrollment_id = @enrollment_id;
+    SELECT @present_sessions = COUNT(*) FROM Attendance WHERE enrollment_id = @enrollment_id AND status = 'PRESENT';
+    RETURN CASE WHEN @total_sessions = 0 THEN 100.0 ELSE (@present_sessions * 100.0) / @total_sessions END;
 END;
 -- TEST CASE:
--- 1) SELECT dbo.fn_AttendanceRate(1) AS AttendanceRate_Enroll1;`,
+-- 1) Tính tỷ lệ điểm danh:
+--    SELECT dbo.fn_AttendanceRate(1) AS AttendanceRate;`,
   },
   {
     id: "f2",
-    name: "F2: Tính tỷ lệ hoàn thành bài tập",
-    sql: `/* F2: Tính tỷ lệ hoàn thành bài tập
-   - Input: @student_id, @course_id
-   - Công thức: (số bài đã nộp / tổng assignment của course) * 100
-   - Bảng: Assignment, Submission
+    name: "F2: Tỷ lệ hoàn thành bài tập",
+    sql: `/* F2: Tính tỷ lệ hoàn thành bài tập của học viên trong khóa
 */
-CREATE OR ALTER FUNCTION fn_AssignmentCompletion
-(
-    @student_id BIGINT,
-    @course_id  BIGINT
-)
-RETURNS DECIMAL(5,2)
-AS
+CREATE OR ALTER FUNCTION fn_AssignmentCompletion (@student_id BIGINT, @course_id BIGINT)
+RETURNS DECIMAL(5,2) AS
 BEGIN
-    DECLARE @total     INT;
-    DECLARE @submitted INT;
-
-    SELECT @total = COUNT(*)
-    FROM Assignment
-    WHERE course_id = @course_id;
-
-    SELECT @submitted = COUNT(*)
-    FROM Submission s
-    JOIN Assignment a ON s.assignment_id = a.assignment_id
-    WHERE a.course_id  = @course_id
-      AND s.student_id = @student_id;
-
-    IF @total = 0
-        RETURN 100.0;
-
-    RETURN (@submitted * 100.0) / @total;
+    DECLARE @total INT, @submitted INT;
+    SELECT @total = COUNT(*) FROM Assignment WHERE course_id = @course_id;
+    SELECT @submitted = COUNT(*) FROM Submission s JOIN Assignment a ON s.assignment_id = a.assignment_id
+    WHERE a.course_id = @course_id AND s.student_id = @student_id;
+    RETURN CASE WHEN @total = 0 THEN 100.0 ELSE (@submitted * 100.0) / @total END;
 END;
 -- TEST CASE:
--- 1) SELECT dbo.fn_AssignmentCompletion(1, 1) AS AssignmentCompletion_Student1_Course1;`,
+-- 1) Tính tỷ lệ hoàn thành:
+--    SELECT dbo.fn_AssignmentCompletion(1, 1) AS AssignmentCompletion;`,
   },
   {
     id: "f3",
-    name: "F3: Tính tiến độ tổng hợp (progress_percent)",
+    name: "F3: Tiến độ tổng hợp",
     sql: `/* F3: Tính tiến độ tổng hợp (progress_percent)
-   - Input: @enrollment_id
-   - Công thức: 0.3 * AttendanceRate + 0.7 * AssignmentCompletion
-   - Bảng: Enrollment, Attendance, Assignment, Submission
 */
-CREATE OR ALTER FUNCTION fn_TotalProgress
-(
-    @enrollment_id BIGINT
-)
-RETURNS DECIMAL(5,2)
-AS
+CREATE OR ALTER FUNCTION fn_TotalProgress (@enrollment_id BIGINT)
+RETURNS DECIMAL(5,2) AS
 BEGIN
-    DECLARE @att_rate   DECIMAL(5,2);
-    DECLARE @assign_rate DECIMAL(5,2);
-    DECLARE @student_id BIGINT;
-    DECLARE @course_id  BIGINT;
-
-    SELECT
-        @student_id = student_id,
-        @course_id  = course_id
-    FROM Enrollment
-    WHERE enrollment_id = @enrollment_id;
-
-    SET @att_rate   = dbo.fn_AttendanceRate(@enrollment_id);
+    DECLARE @att_rate DECIMAL(5,2), @assign_rate DECIMAL(5,2), @student_id BIGINT, @course_id BIGINT;
+    SELECT @student_id = student_id, @course_id = course_id FROM Enrollment WHERE enrollment_id = @enrollment_id;
+    SET @att_rate = dbo.fn_AttendanceRate(@enrollment_id);
     SET @assign_rate = dbo.fn_AssignmentCompletion(@student_id, @course_id);
-
     RETURN (@att_rate * 0.3) + (@assign_rate * 0.7);
 END;
 -- TEST CASE:
--- 1) SELECT dbo.fn_TotalProgress(1) AS TotalProgress_Enroll1;`,
+-- 1) Tính tiến độ tổng hợp:
+--    SELECT dbo.fn_TotalProgress(1) AS TotalProgress;`,
   },
 ];
 
 const cursors: SqlOption[] = [
   {
     id: "c1",
-    name: "C1: Cursor duyệt danh sách học viên trong khóa để cập nhật tiến độ hàng loạt",
-    sql: `DELIMITER $$
-CREATE PROCEDURE UpdateAllProgress()
+    name: "C1: Cập nhật tiến độ hàng loạt",
+    sql: `/* C1: Cursor cập nhật tiến độ hàng loạt cho 1 khóa
+*/
+CREATE OR ALTER PROCEDURE sp_BatchUpdateProgress_Cursor @course_id BIGINT AS
 BEGIN
-    DECLARE done INT DEFAULT 0;
-    DECLARE sid INT;
-    DECLARE cid INT;
-    DECLARE prog FLOAT;
-    DECLARE cur CURSOR FOR 
-        SELECT student_id, course_id FROM Enrollments;
-    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = 1;
-
-    OPEN cur;
-    read_loop: LOOP
-        FETCH cur INTO sid, cid;
-        IF done THEN
-            LEAVE read_loop;
-        END IF;
-        SELECT (COUNT(*)/ (SELECT COUNT(*) FROM Sessions WHERE course_id = cid) * 100)
-        INTO prog
-        FROM Attendance
-        WHERE student_id = sid AND course_id = cid AND attended = 1;
-        UPDATE CourseProgress
-        SET progress = prog
-        WHERE student_id = sid AND course_id = cid;
-    END LOOP;
-    CLOSE cur;
-END$$
-DELIMITER ;`,
+    SET NOCOUNT ON;
+    DECLARE @s_id BIGINT;
+    DECLARE cur_progress CURSOR FOR SELECT student_id FROM Enrollment WHERE course_id = @course_id;
+    OPEN cur_progress;
+    FETCH NEXT FROM cur_progress INTO @s_id;
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+        EXEC sp_UpdateStudentProgress @course_id = @course_id, @student_id = @s_id;
+        FETCH NEXT FROM cur_progress INTO @s_id;
+    END;
+    CLOSE cur_progress; DEALLOCATE cur_progress;
+END;
+-- TEST CASE:
+-- 1) Chạy cập nhật hàng loạt:
+--    EXEC sp_BatchUpdateProgress_Cursor @course_id = 1;
+--    SELECT * FROM Enrollment WHERE course_id = 1;`,
   },
   {
     id: "c2",
-    name: "C2: Cursor tạo báo cáo tổng hợp theo từng khóa",
-    sql: `DELIMITER $$
-CREATE PROCEDURE ReportByCourse()
+    name: "C2: Báo cáo tổng hợp khóa học",
+    sql: `/* C2: Cursor tạo báo cáo tổng hợp theo từng khóa
+*/
+CREATE OR ALTER PROCEDURE sp_CourseReport_Cursor AS
 BEGIN
-    DECLARE done INT DEFAULT 0;
-    DECLARE cid INT;
-    DECLARE cur CURSOR FOR SELECT id FROM Courses;
-    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = 1;
-
-    OPEN cur;
-    report_loop: LOOP
-        FETCH cur INTO cid;
-        IF done THEN
-            LEAVE report_loop;
-        END IF;
-        SELECT cid AS course_id, COUNT(*) AS num_students
-        FROM Enrollments
-        WHERE course_id = cid;
-    END LOOP;
-    CLOSE cur;
-END$$
-DELIMITER ;`,
+    SET NOCOUNT ON;
+    CREATE TABLE #Report (CourseName NVARCHAR(255), StudentCount INT, AvgProgress DECIMAL(5,2));
+    DECLARE @c_id BIGINT, @c_name NVARCHAR(255), @s_count INT, @avg_prog DECIMAL(5,2);
+    DECLARE cur_report CURSOR FOR SELECT course_id, name FROM Course;
+    OPEN cur_report;
+    FETCH NEXT FROM cur_report INTO @c_id, @c_name;
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+        SELECT @s_count = COUNT(*) FROM Enrollment WHERE course_id = @c_id AND status = 'ACTIVE';
+        SELECT @avg_prog = AVG(progress) FROM Enrollment WHERE course_id = @c_id;
+        INSERT INTO #Report VALUES (@c_name, @s_count, ISNULL(@avg_prog, 0));
+        FETCH NEXT FROM cur_report INTO @c_id, @c_name;
+    END;
+    CLOSE cur_report; DEALLOCATE cur_report;
+    SELECT * FROM #Report; DROP TABLE #Report;
+END;
+-- TEST CASE:
+-- 1) Xem báo cáo tổng hợp:
+--    EXEC sp_CourseReport_Cursor;`,
   },
 ];
 
@@ -597,7 +370,9 @@ const SqlPlayground: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<TabType>("storedProcedures");
   const [selectedOption, setSelectedOption] = useState<string>("sp1");
-  const [sqlCode, setSqlCode] = useState<string>(storedProcedures[0].sql);
+  const [testCaseCode, setTestCaseCode] = useState<string>("");
+  const [testCaseTitle, setTestCaseTitle] = useState<string>("");
+  const [definitionCode, setDefinitionCode] = useState<string>("");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -610,6 +385,43 @@ const SqlPlayground: React.FC = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [reportType, setReportType] = useState<string>("students");
 
+  const parseSqlOption = (fullSql: string) => {
+    const marker = "-- TEST CASE:";
+    const index = fullSql.indexOf(marker);
+    if (index === -1) return { mainSql: fullSql, testCase: "", title: "" };
+
+    const mainSql = fullSql.substring(0, index).trim();
+    const testPart = fullSql.substring(index + marker.length).trim();
+
+    // Extract first case: look for "-- 1)" or "-- [LABEL]:"
+    // Handles matches like "-- 1) Description\nSQL" or "-- SP1: Description\nSQL"
+    const firstMatch = testPart.match(
+      /(?:--\s*(?:1\)|[A-Z0-9]+:))([\s\S]*?)(?=--\s*(?:[2-9]\)|[A-Z0-9]+:)|$)/i,
+    );
+    let testCaseRaw = firstMatch ? firstMatch[1].trim() : testPart;
+
+    // Split into lines to extract title and uncomment the SQL statements
+    const lines = testCaseRaw.split("\n");
+    const testCaseTitle = lines[0].trim();
+    const remainingLines = lines.slice(1);
+
+    const cleanedLines = remainingLines.map((line) => {
+      // regex to match leading comment dashes followed by SQL keywords
+      const sqlKeywordRegex =
+        /^\s*--\s*(EXEC|SELECT|INSERT|UPDATE|DELETE|WITH|SET|DECLARE|IF|BEGIN|END|PRINT|MERGE|GO)/i;
+      if (sqlKeywordRegex.test(line)) {
+        return line.replace(/^\s*--\s*/, "");
+      }
+      return line;
+    });
+
+    return {
+      mainSql,
+      testCase: cleanedLines.join("\n").trim(),
+      title: testCaseTitle,
+    };
+  };
+
   const handleTabChange = (tabId: TabType) => {
     setActiveTab(tabId);
     setError(null);
@@ -617,13 +429,19 @@ const SqlPlayground: React.FC = () => {
 
     if (tabId === "importExport") {
       setImportExportMode("import");
-      setSqlCode("");
+      setReportType("user");
+      setDefinitionCode("");
+      setTestCaseCode("");
+      setTestCaseTitle("");
     } else {
       const tab = tabs.find((t) => t.id === tabId);
       if (tab && tab.options.length > 0) {
         const firstOption = tab.options[0];
         setSelectedOption(firstOption.id);
-        setSqlCode(firstOption.sql);
+        const { mainSql, testCase, title } = parseSqlOption(firstOption.sql);
+        setDefinitionCode(mainSql);
+        setTestCaseCode(testCase);
+        setTestCaseTitle(title);
       }
     }
   };
@@ -633,13 +451,16 @@ const SqlPlayground: React.FC = () => {
     const tab = tabs.find((t) => t.id === activeTab);
     const option = tab?.options.find((opt) => opt.id === optionId);
     if (option) {
-      setSqlCode(option.sql);
+      const { mainSql, testCase, title } = parseSqlOption(option.sql);
+      setDefinitionCode(mainSql);
+      setTestCaseCode(testCase);
+      setTestCaseTitle(title);
     }
   };
 
   const handleRunSql = async () => {
-    if (!sqlCode.trim()) {
-      toast.error("SQL code is empty!");
+    if (!testCaseCode.trim()) {
+      toast.error("Test Case is empty!");
       return;
     }
 
@@ -651,7 +472,7 @@ const SqlPlayground: React.FC = () => {
         headers: {
           "Content-Type": "text/plain",
         },
-        body: sqlCode,
+        body: testCaseCode,
       });
 
       const data = await response.json();
@@ -665,7 +486,7 @@ const SqlPlayground: React.FC = () => {
         toast.success("SQL executed successfully!");
       } else {
         setResults([]);
-        toast.info("SQL executed, no results returned.");
+        toast.info(data.message || "SQL executed, no results returned.");
       }
     } catch (err: any) {
       setError(err.message || "An error occurred.");
@@ -744,9 +565,10 @@ const SqlPlayground: React.FC = () => {
       // Download file
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
+      const dateStr = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${reportType}_report.csv`;
+      a.download = `${reportType}_report_${dateStr}.csv`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -760,6 +582,20 @@ const SqlPlayground: React.FC = () => {
       setLoading(false);
     }
   };
+
+  // Initial state logic
+  React.useEffect(() => {
+    if (activeTab !== "importExport") {
+      const tab = tabs.find((t) => t.id === activeTab);
+      const option = tab?.options.find((opt) => opt.id === selectedOption);
+      if (option) {
+        const { mainSql, testCase, title } = parseSqlOption(option.sql);
+        setDefinitionCode(mainSql);
+        setTestCaseCode(testCase);
+        setTestCaseTitle(title);
+      }
+    }
+  }, []);
 
   const currentTab = tabs.find((t) => t.id === activeTab);
 
@@ -837,18 +673,63 @@ const SqlPlayground: React.FC = () => {
                 boxShadow: "0 4px 6px rgba(4, 170, 109, 0.2)",
               }}
             >
-              {loading ? "Running..." : "Run SQL »"}
+              {loading ? "Running..." : "Run Test Case »"}
             </button>
           </div>
 
-          {/* SQL Editor */}
-          <div className="editor-container">
-            <textarea
-              className="sql-editor"
-              value={sqlCode}
-              onChange={(e) => setSqlCode(e.target.value)}
-              spellCheck={false}
-            />
+          {/* SQL Editors */}
+          <div
+            className="editors-flex-container"
+            style={{
+              display: "flex",
+              gap: "20px",
+              marginBottom: "25px",
+            }}
+          >
+            {/* Left: Test Case (Editable) */}
+            <div className="editor-wrapper" style={{ flex: 1 }}>
+              <h3 style={{ margin: "0 0 10px 0", fontSize: "16px" }}>
+                TEST CASE: {testCaseTitle}
+              </h3>
+              <div
+                className="editor-container"
+                style={{ margin: 0, padding: "10px" }}
+              >
+                <textarea
+                  className="sql-editor"
+                  value={testCaseCode}
+                  onChange={(e) => setTestCaseCode(e.target.value)}
+                  spellCheck={false}
+                  style={{ height: "450px" }}
+                />
+              </div>
+            </div>
+
+            {/* Right: Definition (Read-only) */}
+            <div className="editor-wrapper" style={{ flex: 1 }}>
+              <h3 style={{ margin: "0 0 10px 0", fontSize: "16px" }}>SQL</h3>
+              <div
+                className="editor-container"
+                style={{
+                  margin: 0,
+                  padding: "10px",
+                  backgroundColor: "#f5f5f5",
+                }}
+              >
+                <textarea
+                  className="sql-editor"
+                  value={definitionCode}
+                  readOnly
+                  spellCheck={false}
+                  style={{
+                    height: "450px",
+                    backgroundColor: "#2e2e2e",
+                    color: "#a9dc76", // Greenish tint for code view
+                    cursor: "not-allowed",
+                  }}
+                />
+              </div>
+            </div>
           </div>
 
           <h2>Result:</h2>
@@ -921,7 +802,7 @@ const SqlPlayground: React.FC = () => {
                   onClick={() => setReportType("user")}
                   style={{ fontSize: "14px", padding: "5px 15px" }}
                 >
-                  Import Users
+                  Import Student
                 </button>
                 <button
                   className={`tab-btn ${
@@ -1033,7 +914,7 @@ const SqlPlayground: React.FC = () => {
                 {reportType === "user" ? (
                   <p>
                     <strong>Required Columns:</strong> email, first_name,
-                    last_name, role
+                    last_name
                   </p>
                 ) : (
                   <p>

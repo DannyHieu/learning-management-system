@@ -32,18 +32,30 @@ public class SqlController {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
         }
 
-        // Đơn giản: nếu bắt đầu bằng SELECT (hoặc WITH) thì coi là query trả result set
         String lower = trimmed.toLowerCase();
         try {
-            if (lower.startsWith("select") || lower.startsWith("with")) {
-                List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql);
-                return ResponseEntity.ok(rows);
+            // If it contains SELECT or starts with EXEC/WITH, try to get a result set
+            if (lower.contains("select") || lower.startsWith("exec") || lower.startsWith("with")) {
+                try {
+                    List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql);
+                    return ResponseEntity.ok(rows);
+                } catch (Exception e) {
+                    // Fallback: if it's an SP or multi-statement that doesn't return rows directly
+                    if (e.getMessage() != null && e.getMessage().contains("did not return a result set")) {
+                        jdbcTemplate.execute(sql);
+                        Map<String, Object> res = new HashMap<>();
+                        res.put("success", true);
+                        res.put("message", "SQL executed successfully.");
+                        return ResponseEntity.ok(res);
+                    }
+                    throw e; // Real SQL error (syntax, etc)
+                }
             } else {
-                // DDL / DML / EXEC: không kỳ vọng result set
+                // Definitely DDL / DML (Update, Delete, Create)
                 jdbcTemplate.execute(sql);
                 Map<String, Object> res = new HashMap<>();
                 res.put("success", true);
-                res.put("message", "SQL executed successfully (no result set).");
+                res.put("message", "SQL executed successfully.");
                 return ResponseEntity.ok(res);
             }
         } catch (Exception e) {
@@ -75,9 +87,11 @@ public class SqlController {
             String csvContent = importService.exportToCSV(type);
             byte[] out = csvContent.getBytes();
 
+            String dateStr = new java.text.SimpleDateFormat("yyyy-MM-dd").format(new java.util.Date());
+
             return ResponseEntity.ok()
                     .header("Content-Type", "text/csv")
-                    .header("Content-Disposition", "attachment; filename=" + type + "_report.csv")
+                    .header("Content-Disposition", "attachment; filename=" + type + "_report_" + dateStr + ".csv")
                     .body(out);
         } catch (Exception e) {
             Map<String, String> error = new HashMap<>();

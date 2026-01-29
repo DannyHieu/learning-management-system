@@ -46,8 +46,18 @@ public class ImportService {
         try (Scanner scanner = new Scanner(is)) {
             if (!scanner.hasNextLine())
                 return result;
+
             String headerLine = scanner.nextLine();
-            String[] headers = headerLine.split(",");
+            if (headerLine == null || headerLine.trim().isEmpty())
+                return result;
+
+            // Detect delimiter: count commas vs tabs
+            long commaCount = headerLine.chars().filter(ch -> ch == ',').count();
+            long tabCount = headerLine.chars().filter(ch -> ch == '\t').count();
+            String delimiter = (tabCount > commaCount) ? "\\t" : ",";
+
+            // Split headers and clean them
+            String[] headers = headerLine.split(delimiter);
             for (int i = 0; i < headers.length; i++) {
                 headers[i] = headers[i].trim().toLowerCase().replaceAll("^\"|\"$", "");
             }
@@ -56,11 +66,20 @@ public class ImportService {
                 String line = scanner.nextLine();
                 if (line.trim().isEmpty())
                     continue;
-                // Regex to split by comma but ignore commas inside quotes
-                String[] values = line.split(",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)");
+
+                // Split values using the detected delimiter
+                // If comma, handling quotes. if tab, simple split is usually enough
+                String[] values;
+                if (",".equals(delimiter)) {
+                    values = line.split(",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)");
+                } else {
+                    values = line.split("\t");
+                }
+
                 Map<String, String> row = new HashMap<>();
-                for (int i = 0; i < headers.length && i < values.length; i++) {
-                    String val = values[i].trim().replaceAll("^\"|\"$", "").replace("\"\"", "\"");
+                for (int i = 0; i < headers.length; i++) {
+                    String val = (i < values.length) ? values[i] : "";
+                    val = val.trim().replaceAll("^\"|\"$", "").replace("\"\"", "\"");
                     row.put(headers[i], val);
                 }
                 result.add(row);
@@ -70,62 +89,106 @@ public class ImportService {
     }
 
     private Map<String, Object> importUsers(List<Map<String, String>> data) {
-        String[] required = { "email", "first_name", "last_name", "role" };
+        String[] required = { "email" }; // email is the only hard requirement now
         validateHeaders(data.get(0), required);
 
         int count = 0;
-        List<String> skipped = new ArrayList<>();
+        int skippedCount = 0;
+        List<String> duplicates = new ArrayList<>();
+
         for (Map<String, String> row : data) {
             String email = row.get("email");
+            String firstName = row.get("first_name") != null ? row.get("first_name") : "";
+            String lastName = row.get("last_name") != null ? row.get("last_name") : "";
+
+            // Skip only if email is globally missing/blank
+            if (email == null || email.isBlank()) {
+                skippedCount++;
+                continue;
+            }
+
             Integer existing = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM Users WHERE email = ?", Integer.class,
                     email);
 
             if (existing != null && existing > 0) {
-                skipped.add(email);
+                duplicates.add(email);
                 continue;
             }
 
+            // Using SYSDATETIME() for MSSQL datetime2 compatibility
             jdbcTemplate.update(
-                    "INSERT INTO Users (email, first_name, last_name, role, password_hash, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    email,
-                    row.get("first_name"),
-                    row.get("last_name"),
-                    row.get("role"),
-                    "Password123", // Default password, trigger will hash it
-                    "ACTIVE",
-                    new Date());
+                    "INSERT INTO Users (email, first_name, last_name, role, password_hash, status, created_at) VALUES (?, ?, ?, ?, ?, ?, SYSDATETIME())",
+                    email, firstName, lastName, "STUDENT", "Password123", "ACTIVE");
             count++;
         }
 
         Map<String, Object> res = new HashMap<>();
         res.put("success", true);
-        String msg = "Successfully imported " + count + " users.";
-        if (!skipped.isEmpty()) {
-            msg += " Skipped " + skipped.size() + " duplicates: " + String.join(", ", skipped);
+        String msg = "Successfully imported " + count + " students.";
+        if (skippedCount > 0) {
+            msg += " Ignored " + skippedCount + " empty rows.";
+        }
+        if (!duplicates.isEmpty()) {
+            msg += " Skipped " + duplicates.size() + " duplicates.";
         }
         res.put("message", msg);
         return res;
     }
 
     private Map<String, Object> importLessons(List<Map<String, String>> data) {
-        String[] required = { "title", "description", "course_id" };
+        String[] required = { "title", "course_id" };
         validateHeaders(data.get(0), required);
 
         int count = 0;
+        int updated = 0;
+        int skippedCount = 0;
         for (Map<String, String> row : data) {
-            // Inserting into Lesson table as requested
-            // Note: course_id is required by the database schema
-            jdbcTemplate.update(
-                    "INSERT INTO Lesson (title, description, course_id) VALUES (?, ?, ?)",
-                    row.get("title"),
-                    row.get("description"),
-                    row.get("course_id"));
-            count++;
+            String title = row.get("title");
+            String courseId = row.get("course_id");
+            String lessonIdStr = row.get("lesson_id");
+            String desc = row.get("description");
+            if (desc == null)
+                desc = "";
+
+            if (title == null || title.isBlank() || courseId == null || courseId.isBlank()) {
+                skippedCount++;
+                continue;
+            }
+
+            // Check if exists: by lesson_id or (course_id + title)
+            Integer existingId = null;
+            if (lessonIdStr != null && !lessonIdStr.isBlank()) {
+                try {
+                    existingId = jdbcTemplate.queryForObject("SELECT lesson_id FROM Lesson WHERE lesson_id = ?",
+                            Integer.class, lessonIdStr);
+                } catch (Exception e) {
+                    /* ignored */ }
+            }
+            if (existingId == null) {
+                try {
+                    existingId = jdbcTemplate.queryForObject(
+                            "SELECT lesson_id FROM Lesson WHERE course_id = ? AND title = ?",
+                            Integer.class, courseId, title);
+                } catch (Exception e) {
+                    /* ignored */ }
+            }
+
+            if (existingId != null) {
+                jdbcTemplate.update("UPDATE Lesson SET description = ? WHERE lesson_id = ?", desc, existingId);
+                updated++;
+            } else {
+                jdbcTemplate.update("INSERT INTO Lesson (title, description, course_id) VALUES (?, ?, ?)", title, desc,
+                        courseId);
+                count++;
+            }
         }
 
         Map<String, Object> res = new HashMap<>();
         res.put("success", true);
-        res.put("message", "Successfully imported " + count + " lessons.");
+        String msg = "Imported " + count + " new lessons, updated " + updated + " existing.";
+        if (skippedCount > 0)
+            msg += " Ignored " + skippedCount + " incomplete rows.";
+        res.put("message", msg);
         return res;
     }
 
@@ -143,8 +206,8 @@ public class ImportService {
 
     public String exportToCSV(String type) throws Exception {
         String query;
-        if ("students".equalsIgnoreCase(type)) {
-            query = "SELECT email, first_name, last_name, role FROM Users WHERE role = 'STUDENT'";
+        if ("students".equalsIgnoreCase(type) || "user".equalsIgnoreCase(type)) {
+            query = "SELECT email, first_name, last_name, role, created_at FROM Users WHERE role = 'STUDENT'";
         } else if ("courses".equalsIgnoreCase(type) || "lesson".equalsIgnoreCase(type)) {
             query = "SELECT title, description FROM Lesson";
         } else {
@@ -155,8 +218,8 @@ public class ImportService {
         StringBuilder sb = new StringBuilder();
 
         if (rows.isEmpty()) {
-            if ("students".equalsIgnoreCase(type)) {
-                return "email,first_name,last_name,role\n";
+            if ("students".equalsIgnoreCase(type) || "user".equalsIgnoreCase(type)) {
+                return "email,first_name,last_name,role,created_at\n";
             } else {
                 return "title,description\n";
             }
