@@ -1,5 +1,7 @@
 package com.example.back_end;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -11,10 +13,11 @@ import java.util.Map;
 import java.util.HashMap;
 
 @RestController
+
 @RequestMapping("/api/sql")
 @CrossOrigin(origins = "http://localhost:5173")
 public class SqlController {
-
+    Logger logger = LoggerFactory.getLogger(SqlController.class);
     private final JdbcTemplate jdbcTemplate;
     private final ImportService importService;
 
@@ -25,6 +28,7 @@ public class SqlController {
 
     @PostMapping("/execute")
     public ResponseEntity<?> executeSql(@RequestBody String sql) {
+        logger.info("executeSql");
         String trimmed = sql == null ? "" : sql.trim();
         if (trimmed.isEmpty()) {
             Map<String, String> error = new HashMap<>();
@@ -34,33 +38,45 @@ public class SqlController {
 
         String lower = trimmed.toLowerCase();
         try {
-            // If it contains SELECT or starts with EXEC/WITH, try to get a result set
-            if (lower.contains("select") || lower.startsWith("exec") || lower.startsWith("with")) {
+            // SELECT/WITH - chắc chắn có result set
+            if (lower.startsWith("select") || lower.startsWith("with")) {
+                List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql);
+                return ResponseEntity.ok(rows);
+            }
+
+            // EXEC/CALL stored procedure - có thể có hoặc không có result set
+            if (lower.startsWith("exec") || lower.startsWith("call")) {
                 try {
                     List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql);
                     return ResponseEntity.ok(rows);
                 } catch (Exception e) {
-                    // Fallback: if it's an SP or multi-statement that doesn't return rows directly
-                    if (e.getMessage() != null && e.getMessage().contains("did not return a result set")) {
-                        jdbcTemplate.execute(sql);
+                    // Nếu SP không return result set
+                    if (e.getMessage() != null &&
+                            e.getMessage().contains("did not return a result set")) {
+
+                        // SP đã execute thành công rồi, chỉ cần return success
+                        // KHÔNG execute lại để tránh duplicate
                         Map<String, Object> res = new HashMap<>();
                         res.put("success", true);
-                        res.put("message", "SQL executed successfully.");
+                        res.put("message", "Stored procedure executed successfully.");
                         return ResponseEntity.ok(res);
                     }
-                    throw e; // Real SQL error (syntax, etc)
+                    // Exception khác (syntax error, permission, etc) thì throw
+                    throw e;
                 }
-            } else {
-                // Definitely DDL / DML (Update, Delete, Create)
-                jdbcTemplate.execute(sql);
-                Map<String, Object> res = new HashMap<>();
-                res.put("success", true);
-                res.put("message", "SQL executed successfully.");
-                return ResponseEntity.ok(res);
             }
+
+            // DDL/DML (UPDATE, DELETE, CREATE, INSERT, etc.)
+            jdbcTemplate.execute(sql);
+            Map<String, Object> res = new HashMap<>();
+            res.put("success", true);
+            res.put("message", "SQL executed successfully.");
+            return ResponseEntity.ok(res);
+
         } catch (Exception e) {
             Map<String, String> error = new HashMap<>();
             error.put("error", "SQL Error: " + e.getMessage());
+            logger.error("SQL execution error", e);
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
         }
     }
